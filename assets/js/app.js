@@ -355,6 +355,7 @@ createApp({
         const MAX_CONTEXT_SIZE = 1000000;
 
         const settings = reactive({
+            serverUrl: localStorage.getItem('rp_hub_server_url') || '',
             apiUrl: DEFAULT_API_CONFIG.apiUrl,
             apiKey: DEFAULT_API_CONFIG.apiKey,
             model: DEFAULT_API_CONFIG.qualityModel,
@@ -444,6 +445,12 @@ createApp({
         // Watch image gen and model settings for sync
         watch(() => [settings.imageGenKey, settings.imageStyle, settings.qualityModel, settings.balancedModel, settings.fastModel, settings.suggestionModel], () => {
             syncSettingsToGenerator();
+        });
+
+        // Watch serverUrl: persist to localStorage and re-check connection
+        watch(() => settings.serverUrl, (newUrl) => {
+            setServerUrl(newUrl);
+            initDB();
         });
 
         const currentModelMode = ref('quality');
@@ -762,51 +769,64 @@ createApp({
         });
 
 
-        // --- Persistence (IndexedDB) ---
-        const dbName = 'SillyTavernDB';
-        const dbVersion = 1;
-        let db = null;
-
-        const initDB = () => {
-            return new Promise((resolve, reject) => {
-                const request = indexedDB.open(dbName, dbVersion);
-                request.onerror = (event) => reject('DB Error: ' + event.target.error);
-                request.onsuccess = (event) => {
-                    db = event.target.result;
-                    resolve(db);
-                };
-                request.onupgradeneeded = (event) => {
-                    const db = event.target.result;
-                    if (!db.objectStoreNames.contains('store')) {
-                        db.createObjectStore('store');
-                    }
-                };
-            });
-        };
-
+        // --- Persistence (Remote Server via HTTP) ---
         const cloneForStorage = (value) => JSON.parse(JSON.stringify(value));
 
-        const dbSet = (key, value, options = {}) => {
-            return new Promise((resolve, reject) => {
-                if (!db) return reject('DB not initialized');
-                const transaction = db.transaction(['store'], 'readwrite');
-                const store = transaction.objectStore('store');
-                // Clone to plain object to avoid Proxy issues unless the caller already did it.
-                const request = store.put(options.clone === false ? value : cloneForStorage(value), key);
-                request.onsuccess = () => resolve();
-                request.onerror = (event) => reject(event.target.error);
-            });
+        const getServerUrl = () => {
+            return localStorage.getItem('rp_hub_server_url') || '';
         };
 
-        const dbGet = (key) => {
-            return new Promise((resolve, reject) => {
-                if (!db) return reject('DB not initialized');
-                const transaction = db.transaction(['store'], 'readonly');
-                const store = transaction.objectStore('store');
-                const request = store.get(key);
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = (event) => reject(event.target.error);
+        const setServerUrl = (url) => {
+            localStorage.setItem('rp_hub_server_url', url);
+        };
+
+        const serverStatus = ref('checking');
+
+        const initDB = async () => {
+            const baseUrl = getServerUrl();
+            if (!baseUrl) {
+                serverStatus.value = 'disconnected';
+                return;
+            }
+            try {
+                const res = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(3000) });
+                if (res.ok) {
+                    serverStatus.value = 'connected';
+                } else {
+                    serverStatus.value = 'disconnected';
+                }
+            } catch (e) {
+                console.warn('Server not reachable:', e.message);
+                serverStatus.value = 'disconnected';
+            }
+        };
+
+        const dbSet = async (key, value, options = {}) => {
+            const baseUrl = getServerUrl();
+            const resp = await fetch(`${baseUrl}/api/data/${encodeURIComponent(key)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ value: options.clone === false ? value : cloneForStorage(value) })
             });
+            if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
+        };
+
+        const dbGet = async (key) => {
+            const baseUrl = getServerUrl();
+            try {
+                const resp = await fetch(`${baseUrl}/api/data/${encodeURIComponent(key)}`);
+                if (!resp.ok) return null;
+                const data = await resp.json();
+                return data.value;
+            } catch (e) {
+                console.warn(`dbGet(${key}) failed:`, e.message);
+                return null;
+            }
+        };
+
+        const dbDelete = async (key) => {
+            const baseUrl = getServerUrl();
+            await fetch(`${baseUrl}/api/data/${encodeURIComponent(key)}`, { method: 'DELETE' });
         };
 
         let chatHistorySaveTimer = null;
@@ -842,7 +862,7 @@ createApp({
 
         const saveData = async () => {
             try {
-                if (!db) await initDB();
+                await initDB();
                 settings.contextSize = MAX_CONTEXT_SIZE;
                 await dbSet('silly_tavern_characters', characters.value);
                 await dbSet('silly_tavern_settings', settings);
@@ -876,19 +896,10 @@ createApp({
                 console.error('Save failed:', e);
                 if (e.name === 'QuotaExceededError') {
                     showToast('存储空间不足，无法保存', 'error');
+                } else if (e.message?.includes('fetch') || e.message?.includes('NetworkError') || e.message?.includes('Server error')) {
+                    // Server not reachable — silent fail, data stays in memory
                 }
             }
-        };
-
-        const dbDelete = (key) => {
-            return new Promise((resolve, reject) => {
-                if (!db) return reject('DB not initialized');
-                const transaction = db.transaction(['store'], 'readwrite');
-                const store = transaction.objectStore('store');
-                const request = store.delete(key);
-                request.onsuccess = () => resolve();
-                request.onerror = (event) => reject(event.target.error);
-            });
         };
 
         /* extracted generateUUID */
@@ -976,6 +987,9 @@ createApp({
 
                 const savedSettings = await dbGet('silly_tavern_settings');
                 if (savedSettings) Object.assign(settings, savedSettings);
+                // Restore serverUrl from localStorage (in case it was changed locally)
+                const localServerUrl = localStorage.getItem('rp_hub_server_url');
+                if (localServerUrl) settings.serverUrl = localServerUrl;
                 settings.contextSize = MAX_CONTEXT_SIZE;
 
                 const savedPresets = await dbGet('silly_tavern_presets');
@@ -5713,6 +5727,7 @@ image###生成的提示词###
             isAutoImageGenEnabled,
             isGeneratingSuggestions, suggestedReplies, generateSuggestions,
             apiStatus, apiLatency, imageGenStatus, imageGenLatency, checkAllStatuses, // Status Exports
+            serverStatus, // Server connection status
             showQuotaPanel, quotaValue, quotaLoading, quotaError, quotaAvailable, fetchQuota, // Quota exports
             // Memory System Exports
             memories, memorySettings, showMemoryEditor, editingMemory, isExtractingMemory, isBatchExtracting, batchExtractProgress, memoryExtractStatus, memoryFilterCategory,

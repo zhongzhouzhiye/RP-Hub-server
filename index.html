@@ -2112,11 +2112,47 @@
                                     </div>
                                 </div>
 
+                                <!-- Server Connection Settings -->
+                                <div class="pt-6 border-t border-gray-100 mt-6">
+                                    <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center">
+                                        <svg class="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path>
+                                        </svg>
+                                        数据存储服务器
+                                    </h4>
+                                    <div class="grid grid-cols-1 gap-4">
+                                        <div class="bg-gray-50 p-4 rounded-xl border border-gray-100 hover:bg-white hover:border-gray-200 hover:shadow-sm transition-all duration-200">
+                                            <div class="flex items-center justify-between mb-3">
+                                                <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider">服务器地址</label>
+                                                <div class="flex items-center gap-2">
+                                                    <span class="flex items-center gap-1 text-xs font-medium"
+                                                        :class="serverStatus === 'connected' ? 'text-green-600' : (serverStatus === 'checking' ? 'text-yellow-500' : 'text-red-500')">
+                                                        <span class="w-2 h-2 rounded-full"
+                                                            :class="serverStatus === 'connected' ? 'bg-green-500' : (serverStatus === 'checking' ? 'bg-yellow-400 animate-pulse' : 'bg-red-500')"></span>
+                                                        {{ serverStatus === 'connected' ? '已连接' : (serverStatus === 'checking' ? '检测中' : '未连接') }}
+                                                    </span>
+                                                    <button @click="initDB()"
+                                                        class="text-xs text-teal-600 hover:text-teal-700 hover:underline transition-colors ml-1"
+                                                        title="重新检测连接">
+                                                        重试
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div class="relative">
+                                                <input v-model="settings.serverUrl" type="text"
+                                                    class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-gray-700 text-sm font-mono focus:ring-2 focus:ring-teal-100 focus:border-teal-400 focus:outline-none transition-all shadow-sm"
+                                                    placeholder="留空则使用同源地址（默认）">
+                                            </div>
+                                            <p class="mt-2 text-[11px] text-gray-400 leading-relaxed">
+                                                所有数据将存储在此服务器上。修改地址后自动检测连接。如服务器不可用，部分功能可能受限。
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
                             </div>
                         </div>
                     </div>
-
-                    <!-- Advanced Settings -->
                     <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-6">
                         <!-- Header -->
                         <div
